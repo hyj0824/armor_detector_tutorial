@@ -1,0 +1,61 @@
+# clangd 配置（clangd >= 14）
+# 参考: https://clangd.llvm.org/config.html
+
+CompileFlags:
+  # 使用 CMake 生成的编译数据库（相对本文件所在目录）
+  CompilationDatabase: build
+
+  # clangd 14 会误选未安装完整标准库头文件的 GCC 12；这里固定 GCC 11。
+  # 若系统使用其他 GCC 版本，需要同步修改下面三个路径。
+  Add:
+    - "-isystem"
+    - "/usr/include/c++/11"
+    - "-isystem"
+    - "/usr/include/x86_64-linux-gnu/c++/11"
+    - "-isystem"
+    - "/usr/include/c++/11/backward"
+
+  Remove:
+    - "-march=*"
+    - "-mcpu=*"
+    - "-mtune=*"
+    - "-Werror*"
+
+Diagnostics:
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - performance-*
+    Remove:
+      - llvm-*
+      - llvmlibc-*
+      - readability-*
+      - modernize-*
+      - misc-*
+      - clang-analyzer-*
+      - hicpp-*
+      - cppcoreguidelines-*
+      - google-*
+      - cert-*
+      - abseil-*
+      - concurrency-*
+      - portability-*
+      - fuchsia-*
+      - objc-*
+      - darwin-*
+      - linuxkernel-*
+      - android-*
+      - boost-*
+      - mpi-*
+      - openmp-*
+      - bugprone-narrowing-conversions
+      - performance-no-int-to-ptr
+      - performance-inefficient-string-concatenation
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes
+
+Index:
+  Background: Build

@@ -1,0 +1,13 @@
+build/
+build-*/
+*-build/
+*build*/
+compile_commands.json
+.cache/
+.vscode/
+*.swp
+*.avi
+*.mp4
+out/
+scenarios/_*.cfg
+__pycache__/
