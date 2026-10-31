@@ -42,6 +42,21 @@ def read_json(name, timeout=5.0):
     return None
 
 
+def read_json_matching(name, predicate, timeout=10.0):
+    """读到满足条件的内容为止。
+
+    不能只读一次：上一次运行留下的 frame.json 还在共享内存里，
+    直接读会拿到旧 request_id（这个坑已经在 smoke 里踩过一次）。
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = read_json(name, timeout=0.05)
+        if value is not None and predicate(value):
+            return value
+        time.sleep(0.02)
+    return None
+
+
 def write_json(name, value):
     path = os.path.join(SHM, name)
     temporary = path + ".smoke.tmp"
@@ -70,6 +85,14 @@ def main():
 
     log = open(os.path.join(ROOT, "out", "sim-smoke.log"), "w", encoding="utf-8") \
         if os.path.isdir(os.path.join(ROOT, "out")) else subprocess.DEVNULL
+
+    # 清掉上一次留下的信箱：state.json/frame.json 是“最新值邮箱”，
+    # 不清就会读到上一次的 publisher_id，然后新仿真根本不认我们的请求。
+    for name in ("state.json", "frame.json", "request.json"):
+        try:
+            os.remove(os.path.join(SHM, name))
+        except OSError:
+            pass
 
     process = subprocess.Popen([os.path.join(sim_root, "run.sh"), "--", "--remote",
                                 "--config=" + config,
@@ -100,16 +123,43 @@ def main():
         for key in ("fired", "resolved", "hit", "hit_rate"):
             if key not in state["stats"]:
                 return fail("state.stats 缺字段: %s" % key)
+            
+        # --- 评分器依赖的契约（bench/sample_state.py + bench/truth.py）---
+        # 这些字段被删了，评分会静默变成错数字，所以必须在这里卡住。
+        for key in ("speed", "gravity", "barrel_length"):
+            if key not in state.get("weapon", {}):
+                return fail("state.weapon 缺字段: %s（弹道解算要用）" % key)
+        for key in ("yaw_vel", "pitch_vel"):
+            if key not in state["gimbal"]:
+                return fail("state.gimbal 缺字段: %s（随机靶响应分析要用）" % key)
+        if "armors" not in state["camera"]:
+            return fail("state.camera 缺 armors（可见装甲数要用）")
+        for armor in state["truth"].get("armors", []):
+            for key in ("id", "center", "normal", "normal_yaw"):
+                if key not in armor:
+                    return fail("truth.armors[] 缺字段: %s（落点投影要用）" % key)
+        events = state.get("events")
+        if not isinstance(events, list):
+            return fail("state 缺 events 列表（逐发弹丸评分要用）")
+        for event in events:
+            kind = event.get("type")
+            if kind == "shot":
+                for key in ("id", "time", "yaw", "pitch"):
+                    if key not in event:
+                        return fail("shot 事件缺字段: %s（出膛角要用）" % key)
+            elif kind == "impact":
+                for key in ("id", "time", "kind", "point"):
+                    if key not in event:
+                        return fail("impact 事件缺字段: %s（落点要用）" % key)
 
         # --- 取帧握手 ---------------------------------------------------
         request_id = "smoke-%d" % os.getpid()
         write_json("request.json", {"publisher_id": state["publisher_id"],
                                     "request_id": request_id})
-        frame = read_json("frame.json", timeout=10.0)
+        frame = read_json_matching(
+            "frame.json", lambda f: f.get("request_id") == request_id, timeout=10.0)
         if frame is None:
-            return fail("10 秒内没等到 frame.json（是图形模式吗？）")
-        if frame.get("request_id") != request_id:
-            return fail("frame.json 的 request_id 不匹配")
+            return fail("10 秒内没等到匹配的 frame.json（是图形模式吗？）")
 
         # --- 最重要的一条：图像元数据里不许有 truth ----------------------
         if "truth" in frame:

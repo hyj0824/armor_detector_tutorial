@@ -5,12 +5,15 @@
 `static` 场景永远是同一个靶位，所以第一次跑和第一百次跑的初始误差一样。
 把靶位随机掉，每一轮都是一次**阶跃输入**，可以直接量出：
 
-    * 接管时间  —— 从这一帧开始到第一次检出目标
-    * 收敛时间  —— 从检出到误差进入窗口并稳住
+    * 阶跃幅度  —— 开局时差多少度
+    * 收敛时间  —— 从开局到误差进窗口并稳住
     * 超调      —— 收敛过程中反向偏了多少
     * 稳态误差  —— 最后 1 秒的平均偏差
 
 这四件事才是"云台转得怎么样"，而不是"能不能命中"。
+
+数据源是 `bench/truth.py` 写的 aim JSONL（逐 tick 已经对齐到理想弹道解），
+**不依赖被测程序写任何日志**，所以自己写 pipeline 的同学也能直接用这个工具。
 
 每次跑都重启仿真，所以 gimbal 都从 yaw=0 / pitch=0 开始，起点一致。
 （想要"一轮里多次随机跳靶"，需要给仿真加 step 模式，见 README。）
@@ -33,6 +36,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAD2DEG = 180.0 / math.pi
 WINDOW_DEG = 0.6          # 与 pipeline.cpp 里的开火窗口一致
 HOLD_S = 0.30             # 误差要连续稳住这么久才算收敛
+
+
+def wrap(angle):
+    """把角度归一化到 (-pi, pi]。"""
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
 ARMOR_Z = 0.2603703641430668
 
 
@@ -79,25 +88,34 @@ def load_jsonl(path):
     return rows
 
 
-def analyse(trace, log_path):
-    if not trace:
-        return {"ok": False, "reason": "没有 trace"}
-    first = trace[0]["t"]
-    valid = [r for r in trace if r["est"]["valid"]]
-    if not valid:
-        return {"ok": False, "reason": "全程没有检出目标"}
+def analyse(rows, log_path, start=0.0):
+    """输入 truth.py 写的 aim JSONL（逐 tick 已对齐到理想弹道解）。
 
-    acquire = valid[0]["t"] - first
-    initial = math.hypot(valid[0]["err"]["yaw"], valid[0]["err"]["pitch"])
+    指标全部只靠云台角 + 真值：
+        initial_deg   接管瞬间的误差幅度（阶跃幅度）
+        settle_s      从开始到误差进窗口并稳住 HOLD_S
+        overshoot_deg 收敛过程中的反向超调
+        steady_deg    最后 1 秒的平均偏差
+    """
+    ticks = [r for r in rows if r.get("valid") and "ideal_yaw" in r]
+    if not ticks:
+        return {"ok": False, "reason": "全程没有可对齐的云台/目标"}
+
+    for row in ticks:
+        row["gyaw"] = wrap(row["yaw"] - row["ideal_yaw"])
+        row["gpitch"] = row["pitch"] - row["ideal_pitch"]
+
+    first = ticks[0]["t"]
+    initial = math.hypot(ticks[0]["gyaw"], ticks[0]["gpitch"])
     window = WINDOW_DEG / RAD2DEG
     settled_at = None
-    for i, row in enumerate(valid):
-        if abs(row["err"]["yaw"]) > window or abs(row["err"]["pitch"]) > window:
+    for i, row in enumerate(ticks):
+        if abs(row["gyaw"]) > window or abs(row["gpitch"]) > window:
             continue
         end = row["t"] + HOLD_S
-        hold = [r for r in valid[i:] if r["t"] <= end]
+        hold = [r for r in ticks[i:] if r["t"] <= end]
         if hold and hold[-1]["t"] >= end - 0.1 and all(
-                abs(r["err"]["yaw"]) <= window and abs(r["err"]["pitch"]) <= window
+                abs(r["gyaw"]) <= window and abs(r["gpitch"]) <= window
                 for r in hold):
             settled_at = row["t"]
             break
@@ -107,8 +125,8 @@ def analyse(trace, log_path):
     overshoot = 0.0
     if settled_at is not None:
         sign = 0.0
-        for row in valid:
-            error = row["err"]["yaw"]
+        for row in ticks:
+            error = row["gyaw"]
             if abs(error) < window * 0.5:
                 continue
             current = 1.0 if error > 0 else -1.0
@@ -119,8 +137,8 @@ def analyse(trace, log_path):
             if row["t"] >= settled_at:
                 break
 
-    tail = [r for r in valid if r["t"] >= valid[-1]["t"] - 1.0]
-    steady = (sum(math.hypot(r["err"]["yaw"], r["err"]["pitch"]) for r in tail)
+    tail = [r for r in ticks if r["t"] >= ticks[-1]["t"] - 1.0]
+    steady = (sum(math.hypot(r["gyaw"], r["gpitch"]) for r in tail)
               / max(len(tail), 1))
 
     hit_rate = float("nan")
@@ -139,7 +157,6 @@ def analyse(trace, log_path):
 
     return {
         "ok": True,
-        "acquire_s": round(acquire, 2),
         "initial_deg": round(initial * RAD2DEG, 2),
         "settle_s": round(settle, 2) if settle is not None else None,
         "overshoot_deg": round(overshoot * RAD2DEG, 2),
@@ -180,8 +197,8 @@ def main():
                            cwd=ROOT, env=env, stdout=log,
                            stderr=subprocess.STDOUT, check=False)
 
-        trace = load_jsonl(os.path.join(ROOT, "out", "trace-%s.jsonl" % label))
-        metrics = analyse(trace, os.path.join(ROOT, "out", "client-%s.log" % label))
+        rows = load_jsonl(os.path.join(ROOT, "out", "aim-%s.jsonl" % label))
+        metrics = analyse(rows, os.path.join(ROOT, "out", "client-%s.log" % label))
         metrics.update(info)
         metrics["label"] = label
         results.append(metrics)
@@ -192,14 +209,11 @@ def main():
     print()
     if ok:
         settles = [r["settle_s"] for r in ok if r["settle_s"] is not None]
-        acquires = [r["acquire_s"] for r in ok]
         overshoots = [r["overshoot_deg"] for r in ok]
         steadies = [r["steady_deg"] for r in ok]
         hits = [r["hit_rate"] for r in ok if not math.isnan(r["hit_rate"])]
 
         print("成功接管: %d/%d" % (len(ok), len(results)))
-        print("首次检出: 平均 %.2fs  最大 %.2fs（部分轮次靶在视野外）"
-              % (sum(acquires) / len(acquires), max(acquires)))
         if settles:
             print("收敛时间: 平均 %.2fs  最大 %.2fs"
                   % (sum(settles) / len(settles), max(settles)))

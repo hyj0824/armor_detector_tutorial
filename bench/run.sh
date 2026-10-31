@@ -9,6 +9,9 @@
 #   SIM_ROOT   rm_aim_sim 的路径（默认 ../rm_aim_sim）
 #   OUT_DIR    输出目录（默认 ./out）
 #   LABEL      结果标签（默认等于场景名）
+#   ARMOR_TRACE=1  额外让被测程序写 trace（可选，只有实现了 --trace 的程序才认）
+#
+# 评分数据全部来自仿真发布的 state.json，不依赖被测程序写任何日志。
 #
 # 注意：仿真必须图形模式启动（--headless 没有像素），所以需要有显示器或 Xvfb。
 set -uo pipefail
@@ -40,6 +43,17 @@ fi
 
 mkdir -p "$OUT"
 
+EXTRA=()
+if [[ "${ARMOR_TRACE:-0}" == "1" ]]; then
+  EXTRA+=("--trace=$OUT/trace-$LABEL.jsonl")
+fi
+
+# 评分器是可选的：教师仓库里有这两个文件，学生仓库里没有。
+# 缺了就只出命中率（[sim] 那行），不报错。
+SAMPLER="$ROOT/bench/sample_state.py"
+ALIGN="$ROOT/bench/truth.py"
+[[ -f "$SAMPLER" && -f "$ALIGN" ]] || SAMPLER=""
+
 SIM_PID=""
 TRUTH_PID=""
 cleanup() {
@@ -68,12 +82,14 @@ for _ in $(seq 1 60); do
 done
 sleep 1
 
-python3 "$ROOT/bench/sample_truth.py" --out "$OUT/truth-$LABEL.jsonl" &
-TRUTH_PID=$!
-sleep 0.5
+if [[ -n "$SAMPLER" ]]; then
+  python3 "$SAMPLER" --out "$OUT/state-$LABEL.jsonl" &
+  TRUTH_PID=$!
+  sleep 0.5
+fi
 
 "$BIN" --color=blue --fire --no-gui \
-    --duration="$DURATION" --trace="$OUT/trace-$LABEL.jsonl" \
+    --duration="$DURATION" "${EXTRA[@]}" \
     | tee "$OUT/client-$LABEL.log"
 
 kill "$TRUTH_PID" 2>/dev/null
@@ -86,9 +102,10 @@ json.dump({"scenario": sys.argv[2], "duration": float(sys.argv[3]),
            "binary": sys.argv[4]}, open(sys.argv[1], "w"))
 PYEOF
 
-echo "[bench] 对齐真值:"
-python3 "$ROOT/bench/truth.py" "$OUT/trace-$LABEL.jsonl" \
-    --truth "$OUT/truth-$LABEL.jsonl" \
-    --out "$OUT/aim-$LABEL.jsonl" | tee "$OUT/aim-$LABEL.json"
+if [[ -n "$SAMPLER" ]]; then
+  echo "[bench] 对齐真值:"
+  python3 "$ALIGN" "$OUT/state-$LABEL.jsonl" \
+      --out "$OUT/aim-$LABEL.jsonl" | tee "$OUT/aim-$LABEL.json"
+fi
 
 exit 0

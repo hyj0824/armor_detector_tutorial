@@ -82,10 +82,12 @@ def main():
                     aim = json.load(handle)
                 # 用"弹丸到达时刻"的误差，而不是"当前时刻"的误差：
                 # 提前量做对了的系统，在当前时刻看上去反而是偏的。
-                metrics["aim_error_mean_deg"] = aim.get(
-                    "impact_error_mean_deg", aim.get("aim_error_mean_deg"))
+                metrics["track_error_deg"] = aim.get(
+                    "track_error_median_deg", aim.get("aim_error_mean_deg"))
                 metrics["switch_per_s"] = aim.get("switch_per_s")
                 metrics["distance_m"] = aim.get("distance_m")
+                metrics["offset_cm"] = aim.get("offset_cm_mean")
+                metrics["shots_per_s"] = aim.get("shots_per_s")
             except (OSError, ValueError):
                 pass
         meta_path = os.path.join(args.out_dir, "meta-%s.json" % label)
@@ -114,7 +116,8 @@ def main():
         ("fired", "发射", "%.0f"),
         ("hit_per_s", "命中/s", "%.2f"),
         ("switch_per_s", "换板/s", "%.2f"),
-        ("aim_error_mean_deg", "落点误差", "%.2f"),
+        ("track_error_deg", "跟踪误差", "%.2f"),
+        ("offset_cm", "落点cm", "%.1f"),
         ("mean_detect_ms", "检测ms", "%.1f"),
     ]
 
@@ -142,6 +145,11 @@ def main():
         lines.append("")
         lines.append("检出率 = 有目标的帧 / 总帧；命中率 = hit / resolved（仿真统计）。")
         lines.append("命中/s = hit / 运行秒数 —— 同时体现精度和吞吐，**这个才是主指标**。")
+        lines.append("跟踪误差 = 云台实际指向 vs 理想弹道解 的中位数（度，剔除开局接管瞬态，越小越好）。")
+        lines.append("落点cm = 命中落点到装甲板中心的板面内距离（只统计命中发，越小越准）。")
+        lines.append("换板/s = 云台当前指向最近的那块板的 id 变化率。旋转靶上主要由几何决定，"
+                     "**不能**当成'我们的跟踪器跳板了'。")
+        lines.append("除检出率/检测ms 外，全部指标来自仿真 state.json，不受被测程序打印影响。")
         text = "\n".join(lines) + "\n"
 
     sys.stdout.write(text)
