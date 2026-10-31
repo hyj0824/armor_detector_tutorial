@@ -190,7 +190,7 @@ python3 bench/random_target.py --runs 6 --duration 8
 ## 6. 工具
 
 ```bash
-# 逐帧 trace（JSONL），配合画图
+# 逐帧 trace（JSONL），配合画图。注意 run.sh 默认不再传 --trace
 ./build/armor_aim --trace=out/t.jsonl --fire --no-gui
 python3 tools/plot_trace.py out/t.jsonl              # 需要 pip install matplotlib
 python3 tools/plot_trace.py out/t.jsonl --save=/tmp/t.png
@@ -202,28 +202,52 @@ python3 tools/plot_trace.py out/t.jsonl --save=/tmp/t.png
 
 | 工具 | 干什么 |
 |---|---|
-| `bench/run.sh <场景> <秒>` | 起仿真 → 采真值 → 跑自瞄 → 对齐 → 出指标 |
+| `bench/run_all.sh` | 一次跑完 7 个场景并出表（`TAG=before` / `TAG=after` 做 A/B） |
+| `bench/run.sh <场景> <秒>` | 起仿真 → 采样 → 跑自瞄 → 对齐 → 出指标 |
 | `bench/report.py` | 把 `out/` 下所有结果汇总成一张表（可直接贴报告） |
 | `bench/noise.py <场景> --runs N` | 量**测量噪声**：不先知道这个，所有 A/B 都是自欺欺人 |
 | `bench/sweep.py distance/exposure` | 扫参数，画出检测工作区间 |
 | `bench/random_target.py` | 随机静止靶，测云台的阶跃响应 |
-| `bench/sim_smoke.py` | 校验 `rm_aim_sim` 的接口契约有没有变 |
+| `bench/sim_smoke.py` | 校验 `rm_aim_sim` 的接口契约 + 评分器依赖的字段有没有变 |
 
 ```bash
-python3 bench/report.py
+python3 bench/report.py                     # 汇总 out/
+TAG=before bench/run_all.sh                 # 改代码前跑一轮
+TAG=after  bench/run_all.sh                 # 改代码后跑一轮
 python3 bench/noise.py translate --runs 5
 python3 bench/sweep.py distance --values 3,3.5,4.5,5.5,6,7
 python3 bench/random_target.py --runs 6
 python3 bench/sim_smoke.py
 ```
 
-`bench/run.sh` 还会调用 `bench/truth.py`，把 trace 和真值按 `sim_time` 对齐，算出
-**"指令方向"到真实装甲中心的角度误差**——这是 `[self]` 里的 `err` 给不了的，
-因为 trace 里的 `err` 只是"指令减云台实际角"，说明不了瞄得对不对。
+### 评分口径：只信仿真，不信自瞄自己的日志
 
-> `truth.py` 读的是真值。**它和 `bench/sample_truth.py` 都是"裁判"用的，不许出现在自瞄代码里**——
+`bench/run.sh` 起一个 `bench/sample_state.py`，按 80 Hz 把仿真发布的
+`state.json` 落盘，再由 `bench/truth.py` 出指标。**它不读 trace，所以换实现、
+删遥测、甚至一行都不打印的程序都能被评分。**
+
+| 指标 | 怎么算 | 看什么 |
+|---|---|---|
+| 命中/s | 仿真统计的 `hit / 运行秒数` | **主指标**：同时惩罚打不准和不敢打 |
+| 跟踪误差 | 逐 tick 的「云台实际指向 vs 理想弹道解」，取中位数 | 解算+跟踪对不对（含伺服滑后） |
+| 落点cm | 命中落点到装甲板中心的板面内距离 | 打得准不准（只算命中发） |
+| miss_kind | `ground` / `body` / `expired` 各几发 | 打低了 / 打机身上了 / 飞过头了 |
+
+两个坑：
+
+- **不能拿“出膛方向 vs 装甲中心”当误差。** 正确的弹道解**故意**瞄高
+  1.5~2.6°（重力下坠），直线比会把对的判成错的。要用就比“理想弹道解”。
+- **`mean_aim_error_deg`（指令角减云台角）不是精度指标**，它只说明
+  伺服跟不跟得上。精度只有落点和命中率能说。
+
+冻结的 v0 基线在 `bench/frozen/`（同一台机器、一次跑完的数字，含复现条件）。
+
+> `truth.py` 和 `sample_state.py` 读的是真值。**它们是"裁判"用的，不许出现在自瞄代码里**——
 > 拿真值去瞄准，等于作弊，而且在真机上根本没有这个信号。
-> `frame.json` 本来就没有 `truth` 字段（仿真侧已经剔掉），这是唯一的隔离手段。
+>
+> 注意：`frame.json` 里确实没有 `truth`，但 **`state.json` 里有**（`io/sim_client.cpp`
+> 把整份 state 都读进内存了）。所以“读不到真值”这个保证现在是靠纪律，不是靠接口。
+> 真要堵住得让仿真把 truth 发布到单独的文件里去。
 
 ---
 
