@@ -1,81 +1,40 @@
-# armor_aim — 自瞄链路（教师仓库）
+# armor_aim — 完整实现
 
 ```text
-仿真相机 ──▶ 颜色 mask ──▶ 灯条 ──▶ 装甲板候选 ──▶ 距离/PnP ──▶ 跟踪 ──▶ 提前量+弹道 ──▶ 云台指令
+frame ──▶ mask ──▶ 灯条 ──▶ 装甲候选 ──▶ PnP ──▶ 跟踪 ──▶ 提前量+弹道 ──▶ 云台指令
+                                  (vision/)  (solver) (tracker)  (pipeline)
 ```
 
-## 这个仓库现在是什么状态
+同一道题的空骨架在 `main` 分支（仓库默认分支）。这份实现**不是标准答案**，
+也有已知弱点（见文末）；怎么读它见 `main` 分支的 `docs/reading-guide.md`。
 
-三个分支/目录各有各的角色，别混：
+## 成绩
 
-| | 是什么 | 在哪 |
-|---|---|---|
-| **完整实现** | `armor_aim`：检测 → PnP → 跟踪 → 提前量 → 生命周期，四个阶段都做完了 | 本分支 `solution` |
-| **空骨架** | 只接好仿真接口，算法全空，调试工具要自己造 | `main` 分支（仓库默认分支，学生就是从这里开始） |
-| **另一份实现** | `reference/`，默认不编译，用来当第二个参照点 | `-DBUILD_REFERENCE=ON` |
+命中/秒，8 秒单次，1440×1080，`bench/run_all.sh`。三份实现的原始结果都在
+`bench/frozen/`（含 `client-*.log`，可以原地复算）：
 
-成绩（命中/秒，8 秒单次，同一台机器）：
-
-| 场景 | v0（冻结） | `reference/` | 现在的 `armor_aim` |
+| 场景 | 骨架（`main`） | 本分支 | `reference/` |
 |---|---:|---:|---:|
-| `static` | 5.50 | 5.75 | **6.88** |
-| `lowlight` | 5.75 | 5.50 | **6.50** |
-| `far` (5.5 m) | 0.00 | 2.50 | **9.00** |
-| `translate` | 0.00 | 2.00 | **3.50** |
-| `spin` | 0.00 | 2.12 | **3.62** |
-| `combined` | 0.50 | 0.38 | **3.88** |
-| `toofar` (7 m) | 0.00 | 0.00 | 0.00 |
+| `static` | 0.00 | **6.88** | 5.75 |
+| `lowlight` | 0.00 | **6.50** | 5.50 |
+| `far` | 0.00 | **9.00** | 2.50 |
+| `translate` | 0.00 | **3.50** | 2.00 |
+| `spin` | 0.00 | **3.62** | 2.12 |
+| `combined` | 0.00 | **3.88** | 0.38 |
+| `toofar` | 0.00 | 0.00 | 0.00 |
 
-v0 的原始结果冻结在 `bench/frozen/v0/`，现在的实现在 `bench/frozen/s1-s4/`，
-口径和评分建议见 `bench/frozen/README.md`。
+`far` 的 9.00 贴着武器射速上限（10 发/秒）。重复性（`bench/noise.py --runs 3`）：
+`translate` 3.38/4.00/3.00、`spin` 2.88/3.38/3.12、`combined` 3.12/3.50/3.50。
 
-## 接下来的四个阶段（就是学生要做的事）
+`reference/` 是另一份独立实现（`-DBUILD_REFERENCE=ON` 才编译），只作第三个数
+据点用；它在 `combined` 上的 0.38 是关联策略的差别，不是运动模型的差别。
 
-v0 留下的四个缺口，正是 `docs/stages.md` 里的 S1–S4。`solution` 上已经填完了，
-可以当"做完之后长什么样"来看：
-
-| 缺口 | 症状 | 现在是哪一段在管 |
-|---|---|---|
-| 没有距离 | 抬升角是常数，只在 3.4~5.5 m 附近成立 | `pipeline/solver.cpp`（PnP + 弹道） |
-| 没有时序关联 | 自转靶上指令每帧抖，云台追不上 | `pipeline/tracker.cpp` |
-| 没有角速度 / 提前量 | 平移靶 0 命中 | `pipeline/pipeline.cpp`（提前量 + 前馈） |
-| 没有生命周期 | 丢帧 / 暂停 / 换会话后仍按旧目标发指令 | `app/main.cpp` + `pipeline.cpp` |
-
-三个实现上的坑值得单独记，都是实测踩出来的，不是想出来的：
-
-1. **关联门限不能是球形的。** PnP 的深度噪声是 0.1~0.3 m，横向只有几厘米。
-   用 0.25 m 的球门限，深度一抖就判"换板"，速度估计反复重启。
-   拆成"径向松 0.8 m / 切向紧 0.15 m"之后系统才稳。
-2. **开火残差门限不能是绝对值。** 残差随距离增长（3.3 m 处 0.047 m，
-   5.0 m 处 0.119 m），写死 0.06 就等于"远处的靶永远不许开火"。
-3. **不要把位置先低通再线性拟合。** 自转靶的切向在快速旋转，
-   线性模型外推会被这个低通坑死（`spin` 3.6 → 0.0）。
-
----
-
-## 1. 装依赖（这一步本身就是练习）
+## 1. 装依赖
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake libopencv-dev nlohmann-json3-dev
 ```
-
-两个库，两个来源：
-
-- **OpenCV 4**：图像处理。由 `find_package(OpenCV 4 REQUIRED)` 找。
-- **nlohmann-json 3.10+**：解析仿真共享内存里的 JSON。由 `find_package(nlohmann_json)` 找。
-
-验证一下有没有装上：
-
-```bash
-pkg-config --modversion opencv4          # 期望 4.x
-ls /usr/include/nlohmann/json.hpp        # 有就是装好了
-```
-
-如果 CMake 报 `Could not find a package configuration file provided by "nlohmann_json"`，
-说明第二个没装或者装到了非标准路径——**先解决依赖，别去改 CMakeLists**。
-
----
 
 ## 2. 构建与测试
 
@@ -85,311 +44,125 @@ cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-> 讲师额外要跑参考实现（学生用不到）时加 `-DBUILD_REFERENCE=ON`，
-> 会多出一个 `build/armor_aim_ref`，用来标定阈值。见 `docs/stages.md`。
-
-两个测试，都只锁**行为**，不锁实现：
-
-| 测试 | 锁什么 |
-|---|---|
-| `core` | 角度符号约定（像素向右 → yaw 为负）、绕回、目标选择、开火门控 |
-| `ideal_samples` | 4 张实拍正例的检测框 IoU ≥ 0.65 |
-
-把 `vision/angles.cpp` 里的符号改反，`core` 会立刻红——这是它存在的唯一理由。
-
----
-
 ## 3. 跑起来
 
-### 终端一：启动仿真
-
-先准备好 `rm_aim_sim`（本工程默认在 `../rm_aim_sim`）：
-
 ```bash
+# 终端一：起仿真（必须图形模式，--headless 没有像素输出）
 cd ../rm_aim_sim
-./run.sh -- --remote                       # 默认场景：4 m 静止靶
+./run.sh -- --remote
 ./run.sh -- --remote --config=/绝对路径/armor_detector_tutorial/scenarios/spin.cfg
+
+# 终端二：跑自瞄
+./build/armor_aim --color=blue --fire --no-gui --duration=8
 ```
 
-必须**图形模式**（`--headless` 没有像素输出）。`--remote` 打开"本机自瞄控制"，
-否则仿真会丢弃你的指令。
-
-### 终端二：跑自瞄
+跑分：
 
 ```bash
-./build/armor_aim --color=blue --no-gui                  # 只瞄准，不开火
-./build/armor_aim --color=blue --fire --no-gui           # 瞄准 + 开火
-./build/armor_aim --color=blue --fire --trace=out/t.jsonl
+bench/run.sh far 8                  # 单场景
+TAG=before bench/run_all.sh         # 全部 7 个，结果进 out/before/
+python3 bench/report.py             # 汇总成表
 ```
 
-结束时会打印两行：
+`bench/run.sh` 用独立通道 `armorbench`，启动前会清 `/dev/shm/rm_aim_sim_armorbench`，
+所以不会和手起的仿真抢通道。
 
-```text
-[self] frames=256 with_target=165 target_rate=0.645 mean_detect_ms=4.31 mean_aim_error_deg=0.11
-[sim]  fired=56 resolved=56 hit=56 hit_rate=1.000 kills=0
-```
+## 4. 场景
 
-- `[self]` 是你自己这条链路的表现；
-- `[sim]` 是仿真给出的真实命中统计，**这个才算数**。
-
-> `target_rate` 在静止靶上只有 0.65，不是 bug：**命中后灯条会熄灭 50 ms**。
-> 仿真自带的这个行为，正好在练"目标短暂丢失"。
-
----
-
-## 4. 七个场景
-
-`scenarios/*.cfg` 直接喂给仿真，`max_health=10000` 以免靶被打死截断数据。
-主指标是**命中/秒**。下面两列是同一个场景在 v0 和现在的实现上的差距：
-
-| 场景 | 条件 | v0 命中/s | 现在 命中/s | 差在哪一层 |
-|---|---|---:|---:|---|
-| `static` | 4 m 静止 | 5.50 | 6.88 | —— |
-| `lowlight` | 4 m，0.15× 曝光 | 5.75 | 6.50 | 没崩——想想为什么 |
-| `far` | 5.5 m 静止 | **0.00** | **9.00** | S1：抬升角写死 → 距离 + 弹道 |
-| `translate` | 5.5 m，1.5 m/s 横移 | **0.00** | **3.50** | S3：没有提前量 |
-| `spin` | 4 m，4 rad/s 自转 | **0.00** | **3.62** | S2：没有目标关联 |
-| `combined` | 4.5 m，1.2 m/s + 2.5 rad/s | 0.50 | 3.88 | S2+S3 都要，而且关联策略是关键 |
-| `toofar` | 7 m 静止 | 0.00 | 0.00 | **检测**的物理极限，不是配对 |
-
-这张表就是课程骨架：**每个 ❌ 都对应一个具体的能力**。
-三个数据点（v0 / `reference/` / 现在）的完整对照和复现条件见
-`bench/frozen/README.md`。
-
-### 为什么主指标是"命中/秒"
-
-命中率会被"很少开火但很准"骗过去。同一个基线，在软一点的场景里只打 6 发、
-中 4 发，命中率 0.80，看上去比谁都好。**命中/秒同时惩罚"打不准"和"不敢打"。**
-
-### 检测的工作区间（`bench/sweep.py` 实测）
-
-| 距离 | 3.0 | 3.5 | 4.5 | 5.5 | 6.0 | 7.0 |
-|---|---:|---:|---:|---:|---:|---:|
-| 检出率 | 0.03 | 0.68 | 0.55 | **1.00** | 0.00 | 0.00 |
-
-| 曝光 | 0.10× | 0.40× | 1.00× | 2.50× |
-|---|---:|---:|---:|---:|
-| 检出率 | 0.03 | 0.67 | 0.66 | 0.67 |
-
-两头都是悬崖，不是缓坡：3.0 m 处过曝白洞比形态学核还宽，6 m 处灯条只有 2 px 宽。
-
-### 测量噪声（谈"改进"之前先读这个）
-
-动态场景的命中率重复 5 次，波动约 **±26%**。所以 `0.40 → 0.45` 不能当改进，
-`0.40 → 0.65` 才够，下结论至少要重复 3 次。检测耗时只抖 4%，性能类结论可以单次测。
-
-细节和复现命令见 `docs/stages.md`。
-
----
-
-## 5. 随机静止靶：专门测"云台转得怎么样"
-
-固定场景每次起点都一样，看不出云台的真实性能。这个工具每次随机靶位再跑一轮：
-
-```bash
-python3 bench/random_target.py --runs 6 --duration 8
-```
-
-它随机：距离 4.0~5.5 m、横向 ±2.2 m（偶尔超出水平视场）、车型（小/大装甲），
-并让 0 号装甲正面朝向云台（保证量到的是纯云台响应，不掺目标选择的歧义）。
-
-每个随机靶位都是一次**阶跃输入**，于是能量出四件事：
-
-| 指标 | 含义 | 实测（6 轮） |
+| 场景 | 条件 | 考的是 |
 |---|---|---|
-| `initial_deg` | 阶跃幅度 | 4.1 ~ 20.3° |
-| `settle_s` | 从第一帧到误差进入 0.6° 并稳住 0.3 s | **0.17 ~ 0.26 s** |
-| `overshoot_deg` | 收敛过程中反向偏了多少 | **0.00** |
-| `steady_deg` | 最后 1 秒的平均偏差 | **0.01 ~ 0.02°** |
-| `hit_rate` | 仿真统计 | **1.00** |
+| `static` | 4 m 静止 | 闭环通了 |
+| `lowlight` | 4 m，0.15× 曝光 | 检测在低曝光下没崩 |
+| `far` | 5.5 m 静止 | S1 距离 + 弹道 |
+| `translate` | 5.5 m，1.5 m/s 横移 | S3 提前量 |
+| `spin` | 4 m，4 rad/s 自转 | S2 关联 + 速度估计 |
+| `combined` | 4.5 m，1.2 m/s + 2.5 rad/s | 附加题 |
+| `toofar` | 7 m 静止 | 检测的物理极限 |
 
-想加难度就打开 `--rotation`：装甲朝向也随机，这时"两块板争画面中心"的歧义会回来，
-你能看到换板次数飙升、稳态误差从 0.01° 变成几度。**这就是"选择"和"控制"两件事的分界线。**
+任务书（现象 / 需要什么信息 / 改哪儿 / 验收 / 陷阱）和读码指南只在 `main` 分支上：
+`docs/stages.md`、`docs/reading-guide.md`。这个分支不放副本，免得两处不同步。
 
----
+## 5. 三个关键取舍
+
+这三条都是实测踩出来的，每条的另一面都试过、都失败过：
+
+| 取舍 | 另一面的后果 |
+|---|---|
+| 关联门限拆成"径向松 0.8 m / 切向紧 0.15 m" | 球形门限 0.25 m：PnP 深度噪声 0.1~0.3 m，一半的帧在重置跟踪 |
+| 开火残差门限**按距离归一**（`0.03 × distance`） | 绝对值 0.06 m：`far` 只打出 2 发（跟踪误差其实只有 0.16°） |
+| 位置**不**低通，直接进最小二乘 | 加 50 ms EMA：`spin` 从 3.6 掉到 0.0（自转靶切向在快速旋转，线性外推被低通坑死） |
+
+另外两条容易被忽略的：
+
+- **相机比云台旋转中心高 4 cm**。忽略它 5 m 处就有 0.46° 的系统性偏差，
+  而纵向容差只有 0.68°。`solver` 里用 `camera_offset` 补掉了。
+- **提前量里要有流水线延迟**。观测是过去的、指令是现在发的、弹丸是将来到的。
+  只补发射延迟时 `translate` 的落点偏差是 5.4 cm，补上这一帧的间隔后是 4.0 cm。
 
 ## 6. 工具
 
 ```bash
-# 逐帧 trace（JSONL），配合画图。注意 run.sh 默认不再传 --trace
-./build/armor_aim --trace=out/t.jsonl --fire --no-gui
-python3 tools/plot_trace.py out/t.jsonl              # 需要 pip install matplotlib
-python3 tools/plot_trace.py out/t.jsonl --save=/tmp/t.png
+./build/armor_aim --trace=out/t.jsonl --fire --no-gui   # 逐帧 trace（需 --trace）
+python3 tools/plot_trace.py out/t.jsonl                 # 画图（需 matplotlib）
+ARMOR_TRACE=1 bench/run.sh spin 8                       # 跑分时顺便录 trace
 
-# 录一段，离线反复跑同一个场景
 ./build/armor_aim --record=out/rec1 --max-frames=200 --no-gui
-./build/armor_aim --replay=out/rec1 --no-gui         # 不用开仿真
+./build/armor_aim --replay=out/rec1 --no-gui             # 离线复跑，不开仿真
+
+python3 bench/noise.py translate --runs 5    # 测量噪声
+python3 bench/sweep.py distance --values 3,4.5,5.5,6  # 检测工作区间
+python3 bench/random_target.py --runs 6      # 随机静止靶：云台阶跃响应
+python3 bench/sim_smoke.py                   # 校验仿真接口契约
 ```
 
-| 工具 | 干什么 |
-|---|---|
-| `bench/run_all.sh` | 一次跑完 7 个场景并出表（`TAG=before` / `TAG=after` 做 A/B） |
-| `bench/run.sh <场景> <秒>` | 起仿真 → 采样 → 跑自瞄 → 对齐 → 出指标 |
-| `bench/report.py` | 把 `out/` 下所有结果汇总成一张表（可直接贴报告） |
-| `bench/noise.py <场景> --runs N` | 量**测量噪声**：不先知道这个，所有 A/B 都是自欺欺人 |
-| `bench/sweep.py distance/exposure` | 扫参数，画出检测工作区间 |
-| `bench/random_target.py` | 随机静止靶，测云台的阶跃响应 |
-| `bench/sim_smoke.py` | 校验 `rm_aim_sim` 的接口契约 + 评分器依赖的字段有没有变 |
+### 评分口径
 
-```bash
-python3 bench/report.py                     # 汇总 out/
-TAG=before bench/run_all.sh                 # 改代码前跑一轮
-TAG=after  bench/run_all.sh                 # 改代码后跑一轮
-python3 bench/noise.py translate --runs 5
-python3 bench/sweep.py distance --values 3,3.5,4.5,5.5,6,7
-python3 bench/random_target.py --runs 6
-python3 bench/sim_smoke.py
-```
-
-### 评分口径：只信仿真，不信自瞄自己的日志
-
-`bench/run.sh` 起一个 `bench/sample_state.py`，按 80 Hz 把仿真发布的
-`state.json` 落盘，再由 `bench/truth.py` 出指标。**它不读 trace，所以换实现、
-删遥测、甚至一行都不打印的程序都能被评分。**
+评分数据全部来自仿真发布的 `state.json`，**不读 trace**。`bench/run.sh` 按 80 Hz
+把 state 落盘，`bench/truth.py` 出指标——所以换实现、删遥测、甚至一行都不打印的
+程序都能被评分。
 
 | 指标 | 怎么算 | 看什么 |
 |---|---|---|
 | 命中/s | 仿真统计的 `hit / 运行秒数` | **主指标**：同时惩罚打不准和不敢打 |
-| 跟踪误差 | 逐 tick 的「云台实际指向 vs 理想弹道解」，取中位数 | 解算+跟踪对不对（含伺服滑后） |
+| 跟踪误差 | 逐 tick「云台实际指向 vs 理想弹道解」的中位数 | 解算+跟踪对不对（含伺服滑后） |
 | 落点cm | 命中落点到装甲板中心的板面内距离 | 打得准不准（只算命中发） |
-| miss_kind | `ground` / `body` / `expired` 各几发 | 打低了 / 打机身上了 / 飞过头了 |
+| miss_kind | `ground` / `body` / `expired` 各几发 | 打低了 / 打机身上 / 飞过头 |
+| 帧率、仿真/墙钟 | 见 `bench/frozen/README.md` | 这一轮数据是否可信 |
 
-两个坑：
+两个坑：**不能拿"出膛方向 vs 装甲中心"当误差**（正确的弹道解故意瞄高 1.5~2.6°）；
+`mean_aim_error_deg`（指令角减云台角）只说明伺服跟不跟得上，不是精度。
 
-- **不能拿“出膛方向 vs 装甲中心”当误差。** 正确的弹道解**故意**瞄高
-  1.5~2.6°（重力下坠），直线比会把对的判成错的。要用就比“理想弹道解”。
-- **`mean_aim_error_deg`（指令角减云台角）不是精度指标**，它只说明
-  伺服跟不跟得上。精度只有落点和命中率能说。
-
-冻结的 v0 基线在 `bench/frozen/`（同一台机器、一次跑完的数字，含复现条件）。
-
-> `truth.py` 和 `sample_state.py` 读的是真值。**它们是"裁判"用的，不许出现在自瞄代码里**——
-> 拿真值去瞄准，等于作弊，而且在真机上根本没有这个信号。
->
-> 注意：`frame.json` 里确实没有 `truth`，但 **`state.json` 里有**（`io/sim_client.cpp`
-> 把整份 state 都读进内存了）。所以“读不到真值”这个保证现在是靠纪律，不是靠接口。
-> 真要堵住得让仿真把 truth 发布到单独的文件里去。
-
----
+> `truth.py` / `sample_state.py` 读的是真值，只给评分用，不许出现在自瞄代码里。
+> 注意 `state.json` 里带 `truth`，`io/sim_client.cpp` 把整份 state 都读进内存了——
+> 这条隔离靠纪律，不靠接口。
 
 ## 7. 代码地图
 
-| 文件 | 教什么 | 你大概会改它 |
-|---|---|---|
-| `core/types.h` | 一帧的输入长什么样；为什么姿态要跟着帧走 | 少 |
-| `io/capture.h` | 采集层抽象（换视觉源不动上面的代码） | 少 |
-| `io/sim_client.cpp` | 共享内存协议、原子发布、看门狗 | 别动 |
-| `io/sim_capture.cpp` | 协议 → `Observation` 的适配 | 少 |
-| `io/replay_capture.cpp` | 离线回放 | 少 |
-| `vision/preprocess.cpp` | HSV、通道差、**先闭后开**（见注释） | 多 |
-| `vision/light_bar.cpp` | 轮廓、`minAreaRect` 角度约定、几何过滤 | 多 |
-| `vision/armor.cpp` | 两灯条配对与归一化几何量 | 中 |
-| `vision/angles.cpp` | 像素 → 相对角，三个坐标系的符号 | 中 |
-| `pipeline/solver.cpp` | 平面 PnP、云台/世界坐标系、弹道解 | **主要战场** |
-| `pipeline/tracker.cpp` | 世界系关联 + 滑窗拟合 + 各向异性门限 | **主要战场** |
-| `pipeline/pipeline.cpp` | 提前量、前馈、开火门控、生命周期 | **主要战场** |
-| `app/main.cpp` | 主循环：取帧→检测→估计→指令，50 Hz 下发 | 中 |
-| `telemetry/trace.cpp` | 逐帧结构化日志 | 中 |
-
-`pipeline` 是**纯函数**：`Observation → Detection → TargetEstimate → Command`，
-不碰文件、不碰时钟、不碰仿真。所以每个阶段都能离线单测，也不用为了改检测器去开 Godot。
-
----
-
-## 8. 四个阶段与参照点
-
-`docs/stages.md` 里写了 v0 缺的四件事（距离 / 关联 / 提前量 / 生命周期），
-每一件都包含：现象、为什么错、需要什么信息、改哪儿、**验收命令**、常见陷阱。
-
-同一份文档里还有**参照点**：基线 v0 和参考实现各是多少命中/秒，
-以及这些数字是怎么测出来的（噪声、重复次数、为什么用命中/秒）。
-它们不是分数线，是"这件事能做到多好"的两个真实数据点。
-
-## 9. 已知缺口一览
-
-按场景逼出来的顺序，不是按难度排的（详细验收见 `docs/stages.md`）：
-
-| # | 缺口 | 卡住的场景 | 需要补什么 | 需要的信息 |
-|---|---|---|---|---|
-| 1 | 抬升角是常数 | `far`、随机靶的远近变化 | 弹道补偿 | 距离 |
-| 2 | 没距离 | 同上 | PnP 或灯条视高反推 | 灯条几何 + 内外参 |
-| 3 | 没关联 | `spin` / `combined` | 换板惩罚 + 状态估计 | 历史帧 |
-| 4 | 没盯速率 | `translate` | 提前量 = f(距离, 弹速, 延迟) | 距离 + 速率 |
-| 5 | 没生命周期 | 暂停 / 断流 / session 变更 | generation 计数 + 超时 | 时间 |
-
-注意顺序：**1 和 2 是同一件事**（没有距离就没法算抬升，也没法算提前量）。
-先拿距离，后面三件事才有意义。
-
----
-
-## 10. 踩坑记录（讲师实测）
-
-| 现象 | 原因 | 处理 |
-|---|---|---|
-| 一根灯条都检不到 | 灯条过曝成纯白，`S`/`B-R` 掉到 0，mask 里只剩两条细边；**先开运算会把细边抹掉** | 改成先闭后开（已修，见 `preprocess.cpp` 注释） |
-| 3.46 m 能检出、3.46 m 稍微转一下板就检不到 | 白洞宽度和形态学核尺寸是同一量级，处在临界点 | 工作区间 **约 3.4~5.5 m**，边界很脆。核改 5 能救近处，但 `ideal_blue_robot.jpg` 直接掉到 0 个候选（`ideal_samples` 会红） |
-| 6 m 以上完全检不到 | 灯条只有 2 px 宽，低于 `min_area` | 这是**检测**的极限，不是配对的极限 |
-| 跑着跑着没有目标了 | 靶被打死了，灯条全灭 | 场景里设 `max_health=10000` |
-| 仿真报 `max_health must be in [-1, 10000]` | 上限就是 10000 | 别写 100000 |
-| `--channel=xxx` 不生效 | 它**不是**命令行参数 | 改 `scenarios/*.cfg` 的 `[ipc] channel` |
-| `--headless` 收不到图 | 无像素输出 | 用图形模式，或 Xvfb |
-| 仿真说通道被占用 | 同一通道只允许一个客户端 | 关掉上一个客户端 |
-| `pkill -f godot` 把自己也杀了 | `-f` 匹配整条命令行，包括你自己的 shell | 用 `pgrep -x godot` |
-
----
-
-## 11. 提交什么
-
-| 文件 | 内容 |
+| 文件 | 干什么 |
 |---|---|
-| `QA.md` | 16 个自检问题，每题挂证据（命令 + 输出 + `evidence/` 文件） |
-| `REPORT.md` | 六节工程日志：基线 / 逐阶段 / 失败归因表 / 消融 / 证伪 / AI 说明 |
-| `evidence/` | 上面两份文件引用到的所有原始输出 |
-| 你的代码 | 改在 `pipeline/`、`vision/`、`app/`、`io/` 里 |
+| `core/types.h` | 一帧的输入；姿态跟着帧走，弹道参数和相机偏移也在这里 |
+| `io/sim_client.cpp` | 共享内存协议、原子发布、看门狗 |
+| `io/sim_capture.cpp` | 协议 → `Observation` |
+| `io/record.cpp` / `io/replay_capture.cpp` | 落盘 / 离线回放 |
+| `vision/preprocess.cpp` | HSV + 通道差 + 先闭后开 |
+| `vision/light_bar.cpp` | 轮廓 → 灯条，几何过滤 |
+| `vision/armor.cpp` | 两灯条配对 + 归一化几何评分 |
+| `vision/angles.cpp` | 像素 → 相对角（符号约定被 `core` 测试锁着） |
+| `pipeline/solver.cpp` | 平面 PnP（两种间距 + 时间一致性）、云台/世界系、弹道解 |
+| `pipeline/tracker.cpp` | 世界系关联 + 8 帧滑窗最小二乘（位置/速度/残差） |
+| `pipeline/pipeline.cpp` | 提前量、角速度前馈、开火门控、观测过期 |
+| `app/main.cpp` | 主循环：取帧→检测→估计→指令，50 Hz 下发 |
+| `telemetry/trace.cpp` | 逐帧结构化日志 |
+| `reference/` | 另一份独立实现，只作数据点 |
 
-**这些不是作业，是你的工作记录。** 不打分。
+`detect()` 是纯函数；`estimate()` / `command()` 带状态（要历史帧才能估速度）。
 
-它们存在的唯一理由是：三个月后你只会记得"好像改过什么东西"，
-而 `REPORT.md` 第 3 节那张失败归因表，就是那时候唯一能找到线索的地方。
-一年后在真机上遇到问题，能救你的也是这个记录习惯——AI 不知道你们的云台
-有机械间隙，也不知道电控改了哪个字节。
+## 8. 已知弱点
 
-讲师会做的事只有两件：抽几条 `evidence/` 重跑（看是不是真的），
-然后**让你讲**一段你自己的 trace 曲线。讲不出来，回去重做；讲错了，当场讲清楚。
-
----
-
-## 12. 每次实验记什么
-
-不要写"我实现了 XXX"。写这四行：
-
-```text
-假设：把 X 从 A 改成 B，因为……，预期 M 会……
-改动：具体改了哪个文件的哪一行
-实测：before/after 的两次 bench 输出（贴数字，不贴印象）
-结论：保留 / 回滚，以及和预期的差异怎么解释
-```
-
-**回滚也是有效结果。** "AI 说这样更快，实测更慢，我回滚了" 比"我实现了"信息量大得多。
-
----
-
-## 目录
-
-```text
-app/         主循环与命令行
-bench/       跑分脚本、真值采样、真值对齐、随机靶、扫参、噪声、契约检查
-core/        跨模块的数据结构
-io/          采集层（仿真 / 回放）与共享内存协议
-pipeline/    检测 → 估计 → 指令
-docs/        阶段说明与阈值（stages.md）
-reference/   讲师用的参考实现（默认不编译）
-scenarios/   七个仿真场景配置
-telemetry/   逐帧 trace
-tests/       回归测试
-QA.md        作业：16 道题
-REPORT.md    作业：实验报告模板
-tools/       画图
-vision/      检测器（mask / 灯条 / 配对 / 像素→角度）
-assets/      实拍正例，给检测器单测用
-```
+- **`translate` 的落点偏差 5.0 cm**，而 5.58 m 处容差只有 6.4~6.9 cm。余量很薄。
+  速度估计是线性模型，目标掉头时有瞬态。
+- **`combined` 的 3.88 靠的是关联策略**，不是整车运动模型。目标急停/急转时
+  线性速度模型会退化，那时才需要估"整车旋转 + 平移"。
+- **`hero` 大装甲没有专门验证**：代码里两种间距都试，但没有场景逼它。
+- **`toofar` 还是 0**：7 m 处灯条只有 2 px 宽，卡在检测的物理极限。
+- 没有线程、没有开火时机优化、PnP 的深度误差没有专门抑制。

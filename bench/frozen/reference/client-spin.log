@@ -1,0 +1,3 @@
+[input] sim(未连接) (reference)
+[self] frames=395 with_target=212 target_rate=0.537 mean_detect_ms=6.132 mean_aim_error_deg=1.644
+[sim] fired=27.000000 resolved=26.000000 hit=17.000000 hit_rate=0.653846 kills=0.000000
