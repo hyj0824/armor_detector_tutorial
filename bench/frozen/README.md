@@ -5,7 +5,7 @@
 
 - `v0/` —— 改之前是什么样（最初的骨架：角度写死、没有关联、没有提前量）；
 - `s1-s4/` —— 把距离、关联、提前量、生命周期都做对之后是什么样
-  （`main` 分支现在的 `pipeline/` + `solver` + `tracker`）。
+  （`solution` 分支上的 `pipeline/` + `solver` + `tracker`）。
 
 `reference/`（`-DBUILD_REFERENCE=ON`）是另一份独立实现，数字见下。
 

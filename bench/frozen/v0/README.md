@@ -10,7 +10,7 @@
 
 | 项 | 值 |
 |---|---|
-| 二进制 | 教师仓库 `main` 上的 v0（`pipeline.cpp` 还是 `kFixedElevationDeg = 2.10` 那一版） |
+| 二进制 | `solution` 分支上 v0 那一版（`pipeline.cpp` 里还是 `kFixedElevationDeg = 2.10`） |
 | 场景 | `scenarios/*.cfg`，`max_health=10000` |
 | 时长 | 8 秒，每场景**一次** |
 | 分辨率 | 1440×1080，图形模式 |

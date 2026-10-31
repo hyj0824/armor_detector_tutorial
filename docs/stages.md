@@ -67,7 +67,7 @@ ARMOR_BIN=build/armor_aim_ref python3 bench/noise.py translate --runs 5
 
 - **基线 v0** —— 最初的骨架（角度写死、没有关联、没有提前量）；
 - **参考实现** —— `-DBUILD_REFERENCE=ON` 才编译的 `armor_aim_ref`；
-- **S1–S4** —— `main` 上现在的 `pipeline/ + solver + tracker`（四个阶段都做对）。
+- **S1–S4** —— `solution` 分支上的 `pipeline/ + solver + tracker`（四个阶段都做对）。
 
 | 场景 | 基线 v0 | 参考实现 | S1–S4 | 这块是什么 |
 |---|---:|---:|---:|---|
