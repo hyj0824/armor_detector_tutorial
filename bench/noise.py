@@ -21,7 +21,8 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "out", "noise")
 
-KEYS = ["target_rate", "hit_rate", "mean_aim_error_deg", "mean_detect_ms", "frames"]
+KEYS = ["target_rate", "hit_rate", "fired", "hit", "mean_aim_error_deg",
+        "mean_detect_ms", "frames"]
 
 
 def read_metrics(label):

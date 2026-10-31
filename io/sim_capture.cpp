@@ -20,6 +20,31 @@ void fillIntrinsics(const nlohmann::json& camera, Observation& observation) {
     observation.cy = k[5];
 }
 
+// weapon 段在 state.json 里，不在 frame.json 里，所以从 client 的最新状态取。
+// 取不到就保留 Observation 里的默认值（和 configs/default.cfg 一致）。
+void fillWeapon(const nlohmann::json& state, Observation& observation) {
+    if (!state.is_object() || !state.contains("weapon")) {
+        return;
+    }
+    const auto& weapon = state.at("weapon");
+    observation.bullet_speed = weapon.value("speed", observation.bullet_speed);
+    observation.gravity = weapon.value("gravity", observation.gravity);
+    observation.launch_delay = weapon.value("delay", observation.launch_delay);
+    observation.barrel_length = weapon.value("barrel_length", observation.barrel_length);
+}
+
+// camera 段里有相机相对云台的安装偏移。丢掉它就会有一个恒定的角度偏差：
+// 相机比旋转中心高 4 cm，也就是 5 m 处约 0.46°——而 5 m 处的纵向容差只有 0.68°。
+void fillCameraOffset(const nlohmann::json& camera, Observation& observation) {
+    const auto offset = camera.find("t_camera2gimbal");
+    if (offset == camera.end() || !offset->is_array() || offset->size() != 3) {
+        return;
+    }
+    observation.camera_offset =
+        cv::Point3d((*offset)[0].get<double>(), (*offset)[1].get<double>(),
+                    (*offset)[2].get<double>());
+}
+
 }  // namespace
 
 SimCapture::SimCapture(const std::string& channel) : client_(channel) {}
@@ -42,6 +67,8 @@ bool SimCapture::read(Observation& observation) {
     observation.sim_time = meta.at("sim_time").get<double>();
     observation.session_id = meta.value("session_id", std::string{});
     fillIntrinsics(meta.at("camera"), observation);
+    fillCameraOffset(meta.at("camera"), observation);
+    fillWeapon(client_.state(), observation);
 
     // 【关键】这里是"拍摄这一帧时"的云台姿态，不是最新状态。
     observation.gimbal_yaw = gimbal.at("yaw").get<double>();

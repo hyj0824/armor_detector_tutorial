@@ -39,6 +39,10 @@ void onSignal(int) { g_exit = 1; }
 
 constexpr double kRadToDeg = 180.0 / CV_PI;
 
+// 超过这么久没读到新观测，就认为目标已经丢了，停控停火。
+// 仿真的指令看门狗是 250 ms（超过它仿真会自己把指令降级），所以这里必须更小。
+constexpr double kObservationTimeout = 0.20;
+
 // 把中间结果画出来。图上一共有四层信息，看的时候按顺序排查：
 //   mask -> 灯条 -> 候选 -> 选中目标
 void drawDebug(cv::Mat& frame, const Observation& observation,
@@ -105,7 +109,7 @@ int main(int argc, char** argv) {
         PipelineConfig pipeline_config;
         pipeline_config.detector.target_color = options.color;
         pipeline_config.allow_fire = options.allow_fire;
-        const Pipeline pipeline(pipeline_config);
+        Pipeline pipeline(pipeline_config);
 
         std::unique_ptr<ICapture> capture;
         if (!options.replay.empty()) {
@@ -133,6 +137,11 @@ int main(int argc, char** argv) {
 
         Command last_command;
         bool have_command = false;
+        // 最后一次"真的读到一帧"的时刻。指令按 50 Hz 下发，但帧率更低，
+        // 中间帧复用旧指令——所以必须知道这条旧指令到底有多旧。
+        auto last_frame = begin;
+        bool have_frame = false;
+        std::string session_id;
 
         int frames = 0;
         int frames_with_target = 0;
@@ -155,6 +164,15 @@ int main(int argc, char** argv) {
             Observation observation;
             if (capture->read(observation)) {
                 ++frames;
+                // 仿真重启会换 session_id。不清理的话会拿着上一次的目标继续发指令。
+                if (!session_id.empty() && observation.session_id != session_id) {
+                    pipeline.reset();
+                    have_command = false;
+                }
+                session_id = observation.session_id;
+                last_frame = Clock::now();
+                have_frame = true;
+
                 const Detection detection = pipeline.detect(observation.bgr);
                 const TargetEstimate estimate =
                     pipeline.estimate(observation, detection);
@@ -191,9 +209,16 @@ int main(int argc, char** argv) {
             }
 
             // 控制频率和取图频率解耦：50 Hz 下发，中间帧复用上一条指令。
-            // 这也意味着"检测断了但状态还在"时会继续按旧目标控制——那是 stage10 的题。
+            //
+            // 但"复用"有个前提：观测还是新的。超过 200 ms 没读到新帧就发空指令
+            // （control=false, fire=false）——真机上那对应"丢目标后停火"，
+            // 而仿真的指令看门狗是 250 ms，所以这个门限必须比它小。
             if (capture->controllable() && now >= next_send) {
-                capture->write(have_command ? last_command : Command{});
+                const bool fresh =
+                    have_command && have_frame &&
+                    std::chrono::duration<double>(now - last_frame).count() <
+                        kObservationTimeout;
+                capture->write(fresh ? last_command : Command{});
                 next_send += std::chrono::milliseconds(20);
                 if (next_send < now) {
                     next_send = now + std::chrono::milliseconds(20);

@@ -225,6 +225,14 @@ def main():
     span = max(times[-1] - times[0], 1e-6) if len(times) > 1 else 1e-6
     track = [r["track_deg"] for r in valid if "track_deg" in r]
 
+    # 仿真时间 / 墙钟时间。理想值 1.00。
+    # 明显小于 1 说明仿真跑不动（Godot 每帧的物理步数有上限，跟不上就少算），
+    # 这时 "命中/s = hit / 墙钟秒数" 会系统性地偏低，和其他机器/其他时段不可比。
+    walls = [r["wall"] for r in ticks if isinstance(r.get("wall"), (int, float))]
+    sim_speed = None
+    if len(walls) > 1 and walls[-1] > walls[0]:
+        sim_speed = round(span / (walls[-1] - walls[0]), 3)
+
     # ---- 2. 逐发弹丸：落点 -------------------------------------------------
     shots, impacts = {}, {}
     for event in events:
@@ -281,7 +289,9 @@ def main():
         "offset_cm_mean": round(statistics.fmean(offsets), 2) if offsets else None,
         "offset_cm_p95": quantile(offsets, 0.95),
         "miss_kind": {k: v for k, v in sorted(kinds.items())},
+        "sim_speed": sim_speed,
         "span_s": round(span, 3),
+        "paused_ticks": sum(1 for row in ticks if row.get("paused")),
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

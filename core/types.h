@@ -36,6 +36,16 @@ struct Observation {
     // 因为换算到世界系时要用 p_world = R(yaw,pitch) * p_gimbal + origin。
     cv::Point3d gimbal_origin{0.0, 0.0, 0.0};
 
+    // 相机相对云台旋转中心的安装偏移（云台系：x 前、y 左、z 上）。
+    // 忘了它，5 m 处会有约 0.5° 的系统性偏差。
+    cv::Point3d camera_offset{0.08, 0.0, 0.04};
+
+    // 弹道参数。仿真里这些在 configs/default.cfg 里可调，所以**不能写死**。
+    double bullet_speed = 23.0;    // m/s，出膛速度
+    double gravity = 9.7833;       // m/s^2
+    double launch_delay = 0.015;   // s，扣扳机到出膛
+    double barrel_length = 0.22;   // m，炮口到云台旋转中心
+
     std::string session_id;
 
     bool empty() const { return bgr.empty(); }

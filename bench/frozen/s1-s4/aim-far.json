@@ -1,0 +1,21 @@
+{
+  "ticks": 505,
+  "valid": 505,
+  "track_error_mean_deg": 0.244,
+  "track_error_median_deg": 0.141,
+  "track_error_p95_deg": 1.694,
+  "straight_error_mean_deg": 2.556,
+  "switch_per_s": 0.0,
+  "distance_m": 5.27,
+  "shots": 73,
+  "shots_per_s": 8.57,
+  "offset_cm_mean": 1.2,
+  "offset_cm_p95": 2.15,
+  "miss_kind": {
+    "hit": 72,
+    "unresolved": 1
+  },
+  "sim_speed": 1.0,
+  "span_s": 8.517,
+  "paused_ticks": 0
+}

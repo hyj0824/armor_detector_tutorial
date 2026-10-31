@@ -43,6 +43,15 @@ void FrameRecorder::write(const Observation& observation) {
     line["cx"] = observation.cx;
     line["cy"] = observation.cy;
     line["session_id"] = observation.session_id;
+    // 相机安装偏移和弹道参数也要落盘，否则回放时会静默用默认值，
+    // 和录制时的仿真配置对不上。
+    line["camera_offset"] = {observation.camera_offset.x,
+                             observation.camera_offset.y,
+                             observation.camera_offset.z};
+    line["weapon"] = {{"speed", observation.bullet_speed},
+                      {"gravity", observation.gravity},
+                      {"delay", observation.launch_delay},
+                      {"barrel_length", observation.barrel_length}};
     line["gimbal"] = {{"yaw", observation.gimbal_yaw},
                       {"pitch", observation.gimbal_pitch},
                       {"yaw_vel", observation.gimbal_yaw_vel},

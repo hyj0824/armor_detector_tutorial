@@ -22,6 +22,9 @@ for s in $SCENARIOS; do
   echo "===== $s ====="
   LABEL=$s "$ROOT/bench/run.sh" "$s" "$DUR" 2>&1 \
     | grep -E '^\[sim\]|^\[self\]|track_error_median|offset_cm_mean|"shots"'
+  # 给上一个仿真的关闭留点时间：通道目录会被下一个 run 重建，
+  # 撞上了会出现"客户端一帧都没拿到"的假故障。
+  sleep 1
 done
 
 echo "===== report ====="

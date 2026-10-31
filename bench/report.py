@@ -88,6 +88,7 @@ def main():
                 metrics["distance_m"] = aim.get("distance_m")
                 metrics["offset_cm"] = aim.get("offset_cm_mean")
                 metrics["shots_per_s"] = aim.get("shots_per_s")
+                metrics["sim_speed"] = aim.get("sim_speed")
             except (OSError, ValueError):
                 pass
         meta_path = os.path.join(args.out_dir, "meta-%s.json" % label)
@@ -96,6 +97,7 @@ def main():
                 with open(meta_path, "r", encoding="utf-8") as handle:
                     meta = json.load(handle)
                 duration = float(meta.get("duration") or 0.0)
+                metrics["_duration"] = duration
                 if duration > 0 and "hit" in metrics:
                     # 每秒命中 = 精度 × 吞吐。只看 hit_rate 会被"很少开火但很准"骗过去。
                     metrics["hit_per_s"] = metrics["hit"] / duration
@@ -103,6 +105,8 @@ def main():
             except (OSError, ValueError):
                 pass
         metrics["label"] = label
+        if "frames" in metrics and metrics.get("_duration", 0) > 0:
+            metrics["fps"] = metrics["frames"] / metrics["_duration"]
         rows.append(metrics)
 
     if not rows:
@@ -111,6 +115,7 @@ def main():
     columns = [
         ("label", "场景", "%s"),
         ("frames", "帧", "%.0f"),
+        ("fps", "帧率", "%.0f"),
         ("target_rate", "检出率", "%.2f"),
         ("hit_rate", "命中率", "%.2f"),
         ("fired", "发射", "%.0f"),
@@ -118,6 +123,7 @@ def main():
         ("switch_per_s", "换板/s", "%.2f"),
         ("track_error_deg", "跟踪误差", "%.2f"),
         ("offset_cm", "落点cm", "%.1f"),
+        ("sim_speed", "仿真/墙钟", "%.2f"),
         ("mean_detect_ms", "检测ms", "%.1f"),
     ]
 
@@ -150,6 +156,20 @@ def main():
         lines.append("换板/s = 云台当前指向最近的那块板的 id 变化率。旋转靶上主要由几何决定，"
                      "**不能**当成'我们的跟踪器跳板了'。")
         lines.append("除检出率/检测ms 外，全部指标来自仿真 state.json，不受被测程序打印影响。")
+        slow = [row for row in rows if row.get("fps") is not None and row["fps"] < 40.0]
+        if slow:
+            lines.append("")
+            lines.append("⚠ 帧率偏低（<40）的轮次：" +
+                        "、".join("%s(%.0f)" % (row["label"], row["fps"]) for row in slow))
+            lines.append("  这些轮次的命中/s 不可信：帧率掉了，闭环带宽跟着掉，不是算法的问题。")
+        missing = [label for label in labels
+                   if parse_client_log(os.path.join(args.out_dir,
+                                                    "client-%s.log" % label)) is None]
+        if missing:
+            lines.append("")
+            lines.append("⚠ 没有 [self] 行的轮次（客户端跑挂了）：" + "、".join(missing))
+        lines.append("仿真/墙钟 = 这一轮仿真时间走了多少秒 / 真实时间多少秒。理想 1.00；"
+                     "明显小于 1 说明机器跑不动（仿真掉步），这一轮的命中/s 会偏低，不能跨轮比较。")
         text = "\n".join(lines) + "\n"
 
     sys.stdout.write(text)

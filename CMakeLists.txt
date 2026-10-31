@@ -24,6 +24,8 @@ add_library(armor_core
     vision/armor.cpp
     vision/detector.cpp
     vision/angles.cpp
+    pipeline/solver.cpp
+    pipeline/tracker.cpp
     pipeline/pipeline.cpp
 )
 target_include_directories(armor_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

@@ -45,6 +45,9 @@ def tick_row(state):
     return {
         "k": "tick",
         "t": state.get("sim_time"),
+        # 墙钟。和 t 一起用可以算出"仿真跑得比真实时间快还是慢"：
+        # 渲染跟不上时 Godot 会少跑物理步，仿真时间就落后于墙钟。
+        "wall": state.get("wall_unix_sec"),
         "gimbal": {
             "yaw": gimbal.get("yaw"),
             "pitch": gimbal.get("pitch"),

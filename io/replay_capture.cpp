@@ -60,6 +60,21 @@ bool ReplayCapture::read(Observation& observation) {
                                                 (*origin)[1].get<double>(),
                                                 (*origin)[2].get<double>());
     }
+    // 旧录制文件没有这两段，保留 Observation 的默认值。
+    if (const auto offset = line.find("camera_offset");
+        offset != line.end() && offset->is_array() && offset->size() == 3) {
+        observation.camera_offset = cv::Point3d((*offset)[0].get<double>(),
+                                                 (*offset)[1].get<double>(),
+                                                 (*offset)[2].get<double>());
+    }
+    if (const auto weapon = line.find("weapon");
+        weapon != line.end() && weapon->is_object()) {
+        observation.bullet_speed = weapon->value("speed", observation.bullet_speed);
+        observation.gravity = weapon->value("gravity", observation.gravity);
+        observation.launch_delay = weapon->value("delay", observation.launch_delay);
+        observation.barrel_length =
+            weapon->value("barrel_length", observation.barrel_length);
+    }
     return true;
 }
 

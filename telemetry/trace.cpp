@@ -42,13 +42,19 @@ void Trace::frame(const Observation& observation, const Detection& detection,
                    {"pitch", estimate.pitch},
                    {"dist", estimate.distance},
                    {"yaw_rate", estimate.yaw_rate},
-                   {"pitch_rate", estimate.pitch_rate}};
+                   {"pitch_rate", estimate.pitch_rate},
+                   {"flight", estimate.flight_time},
+                   {"residual", estimate.residual},
+                   {"samples", estimate.samples},
+                   {"vel_ok", estimate.velocity_ok}};
 
     // 控制阶段：指令角、开火位，以及【指令 - 当帧云台实际角】的偏差。
     line["cmd"] = {{"control", command.control},
                    {"fire", command.fire},
                    {"yaw", command.yaw},
-                   {"pitch", command.pitch}};
+                   {"pitch", command.pitch},
+                   {"yaw_vel", command.yaw_vel},
+                   {"pitch_vel", command.pitch_vel}};
 
     line["gim"] = {{"yaw", observation.gimbal_yaw},
                    {"pitch", observation.gimbal_pitch}};

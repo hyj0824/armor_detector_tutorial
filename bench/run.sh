@@ -23,7 +23,9 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 SIM=${SIM_ROOT:-"$ROOT/../rm_aim_sim"}
 OUT=${OUT_DIR:-"$ROOT/out"}
 LABEL=${LABEL:-$SCENARIO}
-CONFIG="$ROOT/scenarios/$SCENARIO.cfg"
+CHANNEL=${CHANNEL:-armorbench}
+CONFIG_SRC="$ROOT/scenarios/$SCENARIO.cfg"
+CONFIG="$OUT/_bench-$LABEL.cfg"
 
 BIN=${ARMOR_BIN:-"$ROOT/build/armor_aim"}
 if [[ ! -x "$BIN" ]]; then
@@ -31,8 +33,8 @@ if [[ ! -x "$BIN" ]]; then
   echo "（参考实现要加 -DBUILD_REFERENCE=ON，然后用 ARMOR_BIN=build/armor_aim_ref）" >&2
   exit 1
 fi
-if [[ ! -f "$CONFIG" ]]; then
-  echo "没有这个场景: $CONFIG" >&2
+if [[ ! -f "$CONFIG_SRC" ]]; then
+  echo "没有这个场景: $CONFIG_SRC" >&2
   ls "$ROOT/scenarios" >&2
   exit 1
 fi
@@ -42,11 +44,21 @@ if [[ ! -x "$SIM/run.sh" ]]; then
 fi
 
 mkdir -p "$OUT"
+# 后面的 --config= 会传给仿真，而仿真以自己的目录为 cwd，所以必须是绝对路径。
+OUT=$(cd "$OUT" && pwd)
+CHANNEL=${CHANNEL:-armorbench}
+CONFIG="$OUT/_bench-$LABEL.cfg"
 
 EXTRA=()
 if [[ "${ARMOR_TRACE:-0}" == "1" ]]; then
   EXTRA+=("--trace=$OUT/trace-$LABEL.jsonl")
 fi
+
+# 用**独立通道**，不要和别人手起的仿真抢 default：
+# 同一通道只允许一个客户端，抢到了对方就会启动失败。
+# 顺手清掉上一次被强杀留下的锁。
+rm -rf "/dev/shm/rm_aim_sim_$CHANNEL"
+{ cat "$CONFIG_SRC"; printf '\n[ipc]\nchannel="%s"\n' "$CHANNEL"; } > "$CONFIG"
 
 # 评分器是可选的：教师仓库里有这两个文件，学生仓库里没有。
 # 缺了就只出命中率（[sim] 那行），不报错。
@@ -83,17 +95,22 @@ done
 sleep 1
 
 if [[ -n "$SAMPLER" ]]; then
-  python3 "$SAMPLER" --out "$OUT/state-$LABEL.jsonl" &
+  python3 "$SAMPLER" --channel="$CHANNEL" --out "$OUT/state-$LABEL.jsonl" &
   TRUTH_PID=$!
   sleep 0.5
 fi
 
-"$BIN" --color=blue --fire --no-gui \
+"$BIN" --channel="$CHANNEL" --color=blue --fire --no-gui \
     --duration="$DURATION" "${EXTRA[@]}" \
     | tee "$OUT/client-$LABEL.log"
 
 kill "$TRUTH_PID" 2>/dev/null
 TRUTH_PID=""
+
+# 健康检查：客户端一帧都没拿到，多半是通道/启动竞争，这一轮的数字没有意义。
+if ! grep -q '^\[self\]' "$OUT/client-$LABEL.log" 2>/dev/null; then
+  echo "[bench][warn] 客户端没有输出 [self] 行：这一轮无效（通道被占/启动竞争），请重跑" >&2
+fi
 
 # 记一份运行元数据：report.py 要用它算"每秒命中"，也用它区分基线/参考实现。
 python3 - "$OUT/meta-$LABEL.json" "$SCENARIO" "$DURATION" "$BIN" <<'PYEOF'
